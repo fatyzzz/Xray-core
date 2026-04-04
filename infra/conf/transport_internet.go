@@ -662,7 +662,6 @@ type TLSConfig struct {
 	VerifyPeerCertInNames   []string         `json:"verifyPeerCertInNames"`
 	ECHServerKeys           string           `json:"echServerKeys"`
 	ECHConfigList           string           `json:"echConfigList"`
-	ECHForceQuery           string           `json:"echForceQuery"`
 	ECHSocketSettings       *SocketConfig    `json:"echSockopt"`
 }
 
@@ -752,13 +751,6 @@ func (c *TLSConfig) Build() (proto.Message, error) {
 		}
 		config.EchServerKeys = EchPrivateKey
 	}
-	switch c.ECHForceQuery {
-	case "none", "half", "full", "":
-		config.EchForceQuery = c.ECHForceQuery
-	default:
-		return nil, errors.New(`invalid "echForceQuery": `, c.ECHForceQuery)
-	}
-	config.EchForceQuery = c.ECHForceQuery
 	config.EchConfigList = c.ECHConfigList
 	if c.ECHSocketSettings != nil {
 		ss, err := c.ECHSocketSettings.Build()
