@@ -182,6 +182,9 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if user != nil || ok {
+			if user == nil {
+				user = &protocol.MemoryUser{Account: &account.MemoryAccount{Auth: auth}}
+			}
 			h.auth = true
 			h.user = user
 
