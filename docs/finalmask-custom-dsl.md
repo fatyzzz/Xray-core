@@ -28,6 +28,10 @@ Supported item fields:
 - `randRange`
 - `type` for byte literal decoding
 
+UDP config additionally supports:
+
+- `mode`
+
 Each item must define exactly one emitted value kind:
 
 - `packet`
@@ -73,10 +77,19 @@ Supported metadata names:
 - `remote_port`
 - `local_ip4_u32`
 - `remote_ip4_u32`
+- `src_port_u16`
+- `dst_port_u16`
+- `src_ip4_u32`
+- `dst_ip4_u32`
 
-`local_port` and `remote_port` are numeric values.
+`local_port`, `remote_port`, `src_port_u16`, and `dst_port_u16` are numeric values.
 
-`local_ip4_u32` and `remote_ip4_u32` are IPv4 numeric values encoded as unsigned 32-bit integers in network byte order before higher-level operators such as `be32`.
+`local_ip4_u32`, `remote_ip4_u32`, `src_ip4_u32`, and `dst_ip4_u32` are IPv4 numeric values encoded as unsigned 32-bit integers in network byte order before higher-level operators such as `be32`.
+
+Alias mapping:
+
+- `src_*` aliases map to the remote endpoint
+- `dst_*` aliases map to the local endpoint
 
 Metadata lookup fails when the requested value is unavailable.
 
@@ -97,6 +110,8 @@ State is isolated by key and not shared globally across unrelated peers.
 
 UDP semantics:
 
+- `mode: "prefix"` is the default behavior and preserves legacy header-prefix semantics
+- `mode: "standalone"` evaluates `client` and `server` items as detached handshake packets and forwards later payload datagrams without prefixing
 - item lists are evaluated in packet order
 - inbound matching may capture values for later reuse
 - outbound building may reuse previously saved values for the same state key

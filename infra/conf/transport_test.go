@@ -190,10 +190,12 @@ func TestHeaderCustomUDPBuild(t *testing.T) {
 					{
 						"var": "txid"
 					}
-				]
+				],
+				"mode": "standalone"
 			}`,
 			Parser: parser,
 			Output: &finalmaskcustom.UDPConfig{
+				Mode: "standalone",
 				Client: []*finalmaskcustom.UDPItem{
 					{
 						RandMax: 255,

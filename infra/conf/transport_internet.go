@@ -1663,11 +1663,18 @@ func buildCustomExprArg(arg CustomExprArg) (*custom.ExprArg, error) {
 }
 
 type HeaderCustomUDP struct {
+	Mode   string    `json:"mode"`
 	Client []UDPItem `json:"client"`
 	Server []UDPItem `json:"server"`
 }
 
 func (c *HeaderCustomUDP) Build() (proto.Message, error) {
+	switch c.Mode {
+	case "", "prefix", "standalone":
+	default:
+		return nil, errors.New("unknown udp mode")
+	}
+
 	for _, item := range c.Client {
 		if err := validateCustomItemSpec(item.Save, item.Packet, item.Rand, item.Var, item.Expr); err != nil {
 			return nil, err
@@ -1736,6 +1743,7 @@ func (c *HeaderCustomUDP) Build() (proto.Message, error) {
 	return &custom.UDPConfig{
 		Client: client,
 		Server: server,
+		Mode:   c.Mode,
 	}, nil
 }
 
