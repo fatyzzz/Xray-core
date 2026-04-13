@@ -2,6 +2,7 @@ package conf_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 	_ "unsafe"
@@ -11,7 +12,6 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
 	. "github.com/xtls/xray-core/infra/conf"
-
 	"google.golang.org/protobuf/proto"
 )
 
@@ -239,4 +239,62 @@ func TestRouterConfig(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestRouterBuildAcceptsObservatoryTag(t *testing.T) {
+	cfg := &RouterConfig{
+		Balancers: []*BalancingRule{
+			{
+				Tag:            "yt",
+				Selectors:      StringList{"yt-"},
+				ObservatoryTag: "youtube",
+				Strategy:       StrategyConfig{Type: "leastPing"},
+			},
+		},
+	}
+
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	if got := built.BalancingRule[0].ObservatoryTag; got != "youtube" {
+		t.Fatalf("unexpected observatoryTag: %q", got)
+	}
+}
+
+func TestXrayBuildRejectsMissingObservatoryTag(t *testing.T) {
+	raw := []byte(`{
+		"observatories": [
+			{
+				"tag": "youtube",
+				"subjectSelector": ["yt-"],
+				"pingConfig": {
+					"destination": "https://www.youtube.com/generate_204",
+					"interval": "30s",
+					"sampling": 5,
+					"timeout": "5s"
+				}
+			}
+		],
+		"routing": {
+			"balancers": [
+				{
+					"tag": "foreign",
+					"selector": ["proxy-"],
+					"strategy": {"type": "leastPing"},
+					"observatoryTag": "missing"
+				}
+			]
+		}
+	}`)
+
+	cfg := new(Config)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("json.Unmarshal() failed: %v", err)
+	}
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected missing observatoryTag reference to fail")
+	} else if !strings.Contains(err.Error(), "unknown observatoryTag") || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }

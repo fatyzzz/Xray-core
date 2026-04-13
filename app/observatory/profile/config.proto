@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package xray.core.app.observatory.profile;
+option csharp_namespace = "Xray.App.Observatory.Profile";
+option go_package = "github.com/xtls/xray-core/app/observatory/profile";
+option java_package = "com.xray.app.observatory.profile";
+option java_multiple_files = true;
+
+import "app/observatory/burst/config.proto";
+
+message Observatory {
+  string tag = 1;
+  repeated string subject_selector = 2;
+  string probe_url = 3;
+  int64 probe_interval = 4;
+  bool enable_concurrency = 5;
+  xray.core.app.observatory.burst.HealthPingConfig ping_config = 6;
+}
+
+message Config {
+  repeated Observatory observatory = 1;
+}

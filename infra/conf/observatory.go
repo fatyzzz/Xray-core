@@ -1,12 +1,14 @@
 package conf
 
 import (
-	"google.golang.org/protobuf/proto"
+	"encoding/json"
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/app/observatory/burst"
+	observatoryprofile "github.com/xtls/xray-core/app/observatory/profile"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
+	"google.golang.org/protobuf/proto"
 )
 
 type ObservatoryConfig struct {
@@ -35,4 +37,64 @@ func (b BurstObservatoryConfig) Build() (proto.Message, error) {
 	} else {
 		return nil, err
 	}
+}
+
+type TaggedObservatoryConfig struct {
+	Tag               string               `json:"tag"`
+	SubjectSelector   []string             `json:"subjectSelector"`
+	ProbeURL          string               `json:"probeURL,omitempty"`
+	ProbeInterval     duration.Duration    `json:"probeInterval,omitempty"`
+	EnableConcurrency bool                 `json:"enableConcurrency,omitempty"`
+	HealthCheck       *healthCheckSettings `json:"pingConfig,omitempty"`
+}
+
+type ObservatoriesConfig struct {
+	Observatories []*TaggedObservatoryConfig `json:"observatories"`
+}
+
+func (o *ObservatoriesConfig) UnmarshalJSON(data []byte) error {
+	var observatories []*TaggedObservatoryConfig
+	if err := json.Unmarshal(data, &observatories); err == nil {
+		o.Observatories = observatories
+		return nil
+	}
+
+	type observatoriesAlias ObservatoriesConfig
+	var wrapped observatoriesAlias
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return err
+	}
+	o.Observatories = wrapped.Observatories
+	return nil
+}
+
+func (o *ObservatoriesConfig) Build() (proto.Message, error) {
+	config := &observatoryprofile.Config{}
+	if len(o.Observatories) == 0 {
+		return nil, errors.New("observatories requires at least one entry")
+	}
+	for _, item := range o.Observatories {
+		if item == nil || item.Tag == "" {
+			return nil, errors.New("observatories requires tag")
+		}
+		if item.HealthCheck != nil && (item.ProbeURL != "" || item.ProbeInterval != 0 || item.EnableConcurrency) {
+			return nil, errors.New("observatory ", item.Tag, " cannot mix pingConfig with probeURL/probeInterval/enableConcurrency")
+		}
+		entry := &observatoryprofile.Observatory{
+			Tag:               item.Tag,
+			SubjectSelector:   item.SubjectSelector,
+			ProbeUrl:          item.ProbeURL,
+			ProbeInterval:     int64(item.ProbeInterval),
+			EnableConcurrency: item.EnableConcurrency,
+		}
+		if item.HealthCheck != nil {
+			raw, err := item.HealthCheck.Build()
+			if err != nil {
+				return nil, err
+			}
+			entry.PingConfig = raw.(*burst.HealthPingConfig)
+		}
+		config.Observatory = append(config.Observatory, entry)
+	}
+	return config, nil
 }

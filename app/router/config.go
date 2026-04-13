@@ -122,17 +122,19 @@ func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatch
 	switch strings.ToLower(br.Strategy) {
 	case "leastping":
 		return &Balancer{
-			selectors:   br.OutboundSelector,
-			strategy:    &LeastPingStrategy{},
-			fallbackTag: br.FallbackTag,
-			ohm:         ohm,
+			selectors:      br.OutboundSelector,
+			strategy:       &LeastPingStrategy{observatoryTag: br.ObservatoryTag},
+			fallbackTag:    br.FallbackTag,
+			observatoryTag: br.ObservatoryTag,
+			ohm:            ohm,
 		}, nil
 	case "roundrobin":
 		return &Balancer{
-			selectors:   br.OutboundSelector,
-			strategy:    &RoundRobinStrategy{FallbackTag: br.FallbackTag},
-			fallbackTag: br.FallbackTag,
-			ohm:         ohm,
+			selectors:      br.OutboundSelector,
+			strategy:       &RoundRobinStrategy{FallbackTag: br.FallbackTag, observatoryTag: br.ObservatoryTag},
+			fallbackTag:    br.FallbackTag,
+			observatoryTag: br.ObservatoryTag,
+			ohm:            ohm,
 		}, nil
 	case "leastload":
 		i, err := br.StrategySettings.GetInstance()
@@ -144,20 +146,23 @@ func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatch
 			return nil, errors.New("not a StrategyLeastLoadConfig").AtError()
 		}
 		leastLoadStrategy := NewLeastLoadStrategy(s)
+		leastLoadStrategy.observatoryTag = br.ObservatoryTag
 		return &Balancer{
-			selectors:   br.OutboundSelector,
-			ohm:         ohm,
-			fallbackTag: br.FallbackTag,
-			strategy:    leastLoadStrategy,
+			selectors:      br.OutboundSelector,
+			ohm:            ohm,
+			fallbackTag:    br.FallbackTag,
+			observatoryTag: br.ObservatoryTag,
+			strategy:       leastLoadStrategy,
 		}, nil
 	case "random":
 		fallthrough
 	case "":
 		return &Balancer{
-			selectors:   br.OutboundSelector,
-			ohm:         ohm,
-			fallbackTag: br.FallbackTag,
-			strategy:    &RandomStrategy{FallbackTag: br.FallbackTag},
+			selectors:      br.OutboundSelector,
+			ohm:            ohm,
+			fallbackTag:    br.FallbackTag,
+			observatoryTag: br.ObservatoryTag,
+			strategy:       &RandomStrategy{FallbackTag: br.FallbackTag, observatoryTag: br.ObservatoryTag},
 		}, nil
 	default:
 		return nil, errors.New("unrecognized balancer type")

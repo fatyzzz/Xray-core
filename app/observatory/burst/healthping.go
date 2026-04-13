@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common/dice"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/features/routing"
@@ -26,6 +27,7 @@ type HealthPingSettings struct {
 type HealthPing struct {
 	ctx         context.Context
 	dispatcher  routing.Dispatcher
+	scheduler   sync.Mutex
 	access      sync.Mutex
 	ticker      *time.Ticker
 	tickerClose chan struct{}
@@ -85,7 +87,9 @@ func NewHealthPing(ctx context.Context, dispatcher routing.Dispatcher, config *H
 
 // StartScheduler implements the HealthChecker
 func (h *HealthPing) StartScheduler(selector func() ([]string, error)) {
+	h.scheduler.Lock()
 	if h.ticker != nil {
+		h.scheduler.Unlock()
 		return
 	}
 	interval := h.Settings.Interval * time.Duration(h.Settings.SamplingCount)
@@ -93,6 +97,7 @@ func (h *HealthPing) StartScheduler(selector func() ([]string, error)) {
 	tickerClose := make(chan struct{})
 	h.ticker = ticker
 	h.tickerClose = tickerClose
+	h.scheduler.Unlock()
 	go func() {
 		tags, err := selector()
 		if err != nil {
@@ -125,13 +130,18 @@ func (h *HealthPing) StartScheduler(selector func() ([]string, error)) {
 
 // StopScheduler implements the HealthChecker
 func (h *HealthPing) StopScheduler() {
+	h.scheduler.Lock()
 	if h.ticker == nil {
+		h.scheduler.Unlock()
 		return
 	}
-	h.ticker.Stop()
+	ticker := h.ticker
+	tickerClose := h.tickerClose
 	h.ticker = nil
-	close(h.tickerClose)
 	h.tickerClose = nil
+	h.scheduler.Unlock()
+	ticker.Stop()
+	close(tickerClose)
 }
 
 // Check implements the HealthChecker
@@ -230,6 +240,36 @@ func (h *HealthPing) PutResult(tag string, rtt time.Duration) {
 		h.Results[tag] = r
 	}
 	r.Put(rtt)
+}
+
+func (h *HealthPing) SnapshotObservationResult() []*observatory.OutboundStatus {
+	var result []*observatory.OutboundStatus
+
+	h.access.Lock()
+	defer h.access.Unlock()
+
+	for name, value := range h.Results {
+		stats := value.GetWithCache()
+		status := observatory.OutboundStatus{
+			Alive:           stats.All != stats.Fail,
+			Delay:           stats.Average.Milliseconds(),
+			LastErrorReason: "",
+			OutboundTag:     name,
+			LastSeenTime:    0,
+			LastTryTime:     0,
+			HealthPing: &observatory.HealthPingMeasurementResult{
+				All:       int64(stats.All),
+				Fail:      int64(stats.Fail),
+				Deviation: int64(stats.Deviation),
+				Average:   int64(stats.Average),
+				Max:       int64(stats.Max),
+				Min:       int64(stats.Min),
+			},
+		}
+		result = append(result, &status)
+	}
+
+	return result
 }
 
 // Cleanup removes results of removed handlers,

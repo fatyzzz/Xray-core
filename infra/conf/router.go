@@ -8,7 +8,6 @@ import (
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/serial"
-
 	"google.golang.org/protobuf/proto"
 )
 
@@ -19,10 +18,11 @@ type StrategyConfig struct {
 }
 
 type BalancingRule struct {
-	Tag         string         `json:"tag"`
-	Selectors   StringList     `json:"selector"`
-	Strategy    StrategyConfig `json:"strategy"`
-	FallbackTag string         `json:"fallbackTag"`
+	Tag            string         `json:"tag"`
+	Selectors      StringList     `json:"selector"`
+	Strategy       StrategyConfig `json:"strategy"`
+	FallbackTag    string         `json:"fallbackTag"`
+	ObservatoryTag string         `json:"observatoryTag,omitempty"`
 }
 
 // Build builds the balancing rule
@@ -65,6 +65,7 @@ func (r *BalancingRule) Build() (*router.BalancingRule, error) {
 		FallbackTag:      r.FallbackTag,
 		OutboundSelector: r.Selectors,
 		Tag:              r.Tag,
+		ObservatoryTag:   r.ObservatoryTag,
 	}, nil
 }
 

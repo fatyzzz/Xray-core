@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/dice"
 	"github.com/xtls/xray-core/common/errors"
@@ -19,7 +18,8 @@ type LeastLoadStrategy struct {
 	settings *StrategyLeastLoadConfig
 	costs    *WeightManager
 
-	observer extension.Observatory
+	observer       extension.Observatory
+	observatoryTag string
 
 	ctx context.Context
 }
@@ -139,23 +139,17 @@ func (s *LeastLoadStrategy) selectLeastLoad(nodes []*node) []*node {
 }
 
 func (s *LeastLoadStrategy) getNodes(candidates []string, maxRTT time.Duration) []*node {
-	if s.observer == nil {
-		errors.LogError(s.ctx, "observer is nil")
-		return make([]*node, 0)
-	}
-	observeResult, err := s.observer.GetObservation(s.ctx)
+	observeResult, err := getObservationResult(s.ctx, s.observer, s.observatoryTag)
 	if err != nil {
 		errors.LogInfoInner(s.ctx, err, "cannot get observation")
 		return make([]*node, 0)
 	}
 
-	results := observeResult.(*observatory.ObservationResult)
-
 	outboundlist := outboundList(candidates)
 
 	var ret []*node
 
-	for _, v := range results.Status {
+	for _, v := range observeResult.Status {
 		if v.Alive && (v.Delay < maxRTT.Milliseconds() || maxRTT == 0) && outboundlist.contains(v.OutboundTag) {
 			record := &node{
 				Tag:              v.OutboundTag,

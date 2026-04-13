@@ -265,7 +265,7 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 
 	if c.SendThrough != nil {
 		address := ParseSendThough(c.SendThrough)
-		//Check if CIDR exists
+		// Check if CIDR exists
 		if strings.Contains(*c.SendThrough, "/") {
 			senderSettings.ViaCidr = strings.Split(*c.SendThrough, "/")[1]
 		} else {
@@ -347,20 +347,21 @@ type Config struct {
 	// left for returning error
 	Transport map[string]json.RawMessage `json:"transport"`
 
-	LogConfig        *LogConfig              `json:"log"`
-	RouterConfig     *RouterConfig           `json:"routing"`
-	DNSConfig        *DNSConfig              `json:"dns"`
-	InboundConfigs   []InboundDetourConfig   `json:"inbounds"`
-	OutboundConfigs  []OutboundDetourConfig  `json:"outbounds"`
-	Policy           *PolicyConfig           `json:"policy"`
-	API              *APIConfig              `json:"api"`
-	Metrics          *MetricsConfig          `json:"metrics"`
-	Stats            *StatsConfig            `json:"stats"`
-	Reverse          *ReverseConfig          `json:"reverse"`
-	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
-	Observatory      *ObservatoryConfig      `json:"observatory"`
-	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
-	Version          *VersionConfig          `json:"version"`
+	LogConfig           *LogConfig                 `json:"log"`
+	RouterConfig        *RouterConfig              `json:"routing"`
+	DNSConfig           *DNSConfig                 `json:"dns"`
+	InboundConfigs      []InboundDetourConfig      `json:"inbounds"`
+	OutboundConfigs     []OutboundDetourConfig     `json:"outbounds"`
+	Policy              *PolicyConfig              `json:"policy"`
+	API                 *APIConfig                 `json:"api"`
+	Metrics             *MetricsConfig             `json:"metrics"`
+	Stats               *StatsConfig               `json:"stats"`
+	Reverse             *ReverseConfig             `json:"reverse"`
+	FakeDNS             *FakeDNSConfig             `json:"fakeDns"`
+	Observatory         *ObservatoryConfig         `json:"observatory"`
+	BurstObservatory    *BurstObservatoryConfig    `json:"burstObservatory"`
+	Observatories       *ObservatoriesConfig       `json:"observatories"`
+	Version             *VersionConfig             `json:"version"`
 }
 
 func (c *Config) findInboundTag(tag string) int {
@@ -429,6 +430,10 @@ func (c *Config) Override(o *Config, fn string) {
 		c.BurstObservatory = o.BurstObservatory
 	}
 
+	if o.Observatories != nil {
+		c.Observatories = o.Observatories
+	}
+
 	if o.Version != nil {
 		c.Version = o.Version
 	}
@@ -444,7 +449,6 @@ func (c *Config) Override(o *Config, fn string) {
 				c.InboundConfigs = append(c.InboundConfigs, o.InboundConfigs[i])
 				errors.LogInfo(context.Background(), "[", fn, "] appended inbound with tag: ", o.InboundConfigs[i].Tag)
 			}
-
 		}
 	}
 
@@ -475,6 +479,9 @@ func (c *Config) Override(o *Config, fn string) {
 func (c *Config) Build() (*core.Config, error) {
 	if err := PostProcessConfigureFile(c); err != nil {
 		return nil, errors.New("failed to post-process configuration file").Base(err)
+	}
+	if err := validateObservatories(c); err != nil {
+		return nil, err
 	}
 
 	config := &core.Config{
@@ -573,6 +580,14 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}
 
+	if c.Observatories != nil {
+		r, err := c.Observatories.Build()
+		if err != nil {
+			return nil, errors.New("failed to build observatories configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
 	if c.Version != nil {
 		r, err := c.Version.Build()
 		if err != nil {
@@ -614,6 +629,50 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	return config, nil
+}
+
+func validateObservatories(c *Config) error {
+	if c == nil {
+		return nil
+	}
+
+	known := map[string]struct{}{}
+	if c.Observatories != nil {
+		if c.Observatory != nil || c.BurstObservatory != nil {
+			return errors.New("cannot combine observatories with legacy observatory or burstObservatory")
+		}
+		if _, err := c.Observatories.Build(); err != nil {
+			return errors.New("failed to build observatories configuration").Base(err)
+		}
+		known = make(map[string]struct{}, len(c.Observatories.Observatories))
+		for _, observatory := range c.Observatories.Observatories {
+			if observatory == nil || observatory.Tag == "" {
+				continue
+			}
+			if _, found := known[observatory.Tag]; found {
+				return errors.New("duplicate observatory tag: ", observatory.Tag)
+			}
+			known[observatory.Tag] = struct{}{}
+		}
+	}
+
+	if c.RouterConfig == nil {
+		return nil
+	}
+
+	for _, balancer := range c.RouterConfig.Balancers {
+		if balancer == nil || balancer.ObservatoryTag == "" {
+			continue
+		}
+		if len(known) == 0 {
+			return errors.New("observatoryTag requires observatories")
+		}
+		if _, ok := known[balancer.ObservatoryTag]; !ok {
+			return errors.New("unknown observatoryTag: ", balancer.ObservatoryTag)
+		}
+	}
+
+	return nil
 }
 
 // Convert string to Address.

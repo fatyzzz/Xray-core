@@ -3,11 +3,13 @@ package conf_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/app/log"
+	observatoryprofile "github.com/xtls/xray-core/app/observatory/profile"
 	"github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/app/router"
 	"github.com/xtls/xray-core/common"
@@ -18,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/common/serial"
 	core "github.com/xtls/xray-core/core"
 	. "github.com/xtls/xray-core/infra/conf"
+	_ "github.com/xtls/xray-core/main/distro/all"
 	"github.com/xtls/xray-core/proxy/vmess"
 	"github.com/xtls/xray-core/proxy/vmess/inbound"
 	"github.com/xtls/xray-core/transport/internet"
@@ -302,6 +305,40 @@ func TestConfig_Override(t *testing.T) {
 			&Config{LogConfig: &LogConfig{}, InboundConfigs: []InboundDetourConfig{{Tag: "old"}}},
 		},
 		{
+			"combine/observatories",
+			&Config{
+				Observatories: &ObservatoriesConfig{
+					Observatories: []*TaggedObservatoryConfig{
+						{
+							Tag:             "youtube",
+							SubjectSelector: []string{"yt-"},
+						},
+					},
+				},
+			},
+			&Config{
+				Observatories: &ObservatoriesConfig{
+					Observatories: []*TaggedObservatoryConfig{
+						{
+							Tag:             "global",
+							SubjectSelector: []string{"global-"},
+						},
+					},
+				},
+			},
+			"",
+			&Config{
+				Observatories: &ObservatoriesConfig{
+					Observatories: []*TaggedObservatoryConfig{
+						{
+							Tag:             "global",
+							SubjectSelector: []string{"global-"},
+						},
+					},
+				},
+			},
+		},
+		{
 			"replace/inbounds",
 			&Config{InboundConfigs: []InboundDetourConfig{{Tag: "pos0"}, {Protocol: "vmess", Tag: "pos1"}}},
 			&Config{InboundConfigs: []InboundDetourConfig{{Tag: "pos1", Protocol: "kcp"}}},
@@ -351,5 +388,164 @@ func TestConfig_Override(t *testing.T) {
 				t.Error(r)
 			}
 		})
+	}
+}
+
+func TestXrayBuildAcceptsObservatoriesArray(t *testing.T) {
+	raw := []byte(`{
+		"observatories": [
+			{
+				"tag": "youtube",
+				"subjectSelector": ["yt-"],
+				"pingConfig": {
+					"destination": "https://www.youtube.com/generate_204",
+					"interval": "30s",
+					"sampling": 5,
+					"timeout": "5s"
+				}
+			}
+		],
+		"routing": {
+			"balancers": [
+				{
+					"tag": "yt",
+					"selector": ["yt-"],
+					"strategy": {"type": "leastPing"},
+					"observatoryTag": "youtube"
+				}
+			]
+		}
+	}`)
+
+	cfg := new(Config)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("json.Unmarshal() failed: %v", err)
+	}
+
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+
+	foundProfileApp := false
+	for _, app := range built.App {
+		instance, err := app.GetInstance()
+		if err != nil {
+			t.Fatalf("GetInstance() failed: %v", err)
+		}
+		if _, ok := instance.(*observatoryprofile.Config); ok {
+			foundProfileApp = true
+		}
+	}
+
+	if !foundProfileApp {
+		t.Fatal("expected observatories runtime app to be appended")
+	}
+
+	instance, err := core.New(built)
+	if err != nil {
+		t.Fatalf("core.New() failed: %v", err)
+	}
+	defer instance.Close()
+}
+
+func TestXrayBuildRejectsDuplicateObservatories(t *testing.T) {
+	raw := []byte(`{
+		"observatories": [
+			{
+				"tag": "youtube",
+				"subjectSelector": ["yt-a"],
+				"pingConfig": {
+					"destination": "https://www.youtube.com/generate_204",
+					"interval": "30s",
+					"sampling": 5,
+					"timeout": "5s"
+				}
+			},
+			{
+				"tag": "youtube",
+				"subjectSelector": ["yt-b"],
+				"pingConfig": {
+					"destination": "https://www.google.com/generate_204",
+					"interval": "30s",
+					"sampling": 5,
+					"timeout": "5s"
+				}
+			}
+		],
+		"routing": {
+			"balancers": [
+				{
+					"tag": "yt",
+					"selector": ["yt-"],
+					"strategy": {"type": "leastPing"},
+					"observatoryTag": "youtube"
+				}
+			]
+		}
+	}`)
+
+	cfg := new(Config)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("json.Unmarshal() failed: %v", err)
+	}
+
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected duplicate observatory tags to fail")
+	} else if got := err.Error(); !strings.Contains(got, "duplicate observatory tag: youtube") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestXrayBuildRejectsMixedLegacyAndTaggedObservatories(t *testing.T) {
+	raw := []byte(`{
+		"observatory": {
+			"subjectSelector": ["legacy-"],
+			"probeURL": "https://www.google.com/generate_204"
+		},
+		"observatories": [
+			{
+				"tag": "youtube",
+				"subjectSelector": ["yt-"],
+				"pingConfig": {
+					"destination": "https://www.youtube.com/generate_204",
+					"interval": "30s",
+					"sampling": 5,
+					"timeout": "5s"
+				}
+			}
+		]
+	}`)
+
+	cfg := new(Config)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("json.Unmarshal() failed: %v", err)
+	}
+
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected mixed legacy and tagged observatories to fail")
+	} else if got := err.Error(); !strings.Contains(got, "cannot combine observatories with legacy observatory or burstObservatory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestXrayBuildRejectsInvalidStandaloneObservatories(t *testing.T) {
+	raw := []byte(`{
+		"observatories": [
+			{
+				"subjectSelector": ["yt-"]
+			}
+		]
+	}`)
+
+	cfg := new(Config)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("json.Unmarshal() failed: %v", err)
+	}
+
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected invalid standalone observatories to fail")
+	} else if !strings.Contains(err.Error(), "failed to build observatories configuration") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
