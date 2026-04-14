@@ -11,6 +11,7 @@ import (
 
 const (
 	strategyRandom     string = "random"
+	strategyFallback   string = "fallback"
 	strategyLeastPing  string = "leastping"
 	strategyRoundRobin string = "roundrobin"
 	strategyLeastLoad  string = "leastload"
@@ -19,6 +20,7 @@ const (
 var (
 	strategyConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
 		strategyRandom:     func() interface{} { return new(strategyEmptyConfig) },
+		strategyFallback:   func() interface{} { return new(strategyEmptyConfig) },
 		strategyLeastPing:  func() interface{} { return new(strategyEmptyConfig) },
 		strategyRoundRobin: func() interface{} { return new(strategyEmptyConfig) },
 		strategyLeastLoad:  func() interface{} { return new(strategyLeastLoadConfig) },

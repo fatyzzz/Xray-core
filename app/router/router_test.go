@@ -5,20 +5,53 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	"github.com/xtls/xray-core/app/observatory"
 	. "github.com/xtls/xray-core/app/router"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
+	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/outbound"
 	routing_session "github.com/xtls/xray-core/features/routing/session"
 	"github.com/xtls/xray-core/testing/mocks"
+	"google.golang.org/protobuf/proto"
 )
 
 type mockOutboundManager struct {
 	outbound.Manager
 	outbound.HandlerSelector
+}
+
+type fakeObservatory struct {
+	result *observatory.ObservationResult
+}
+
+func (f *fakeObservatory) Type() interface{} {
+	return extension.ObservatoryType()
+}
+
+func (f *fakeObservatory) Start() error { return nil }
+
+func (f *fakeObservatory) Close() error { return nil }
+
+func (f *fakeObservatory) GetObservation(context.Context) (proto.Message, error) {
+	return f.result, nil
+}
+
+func testContextWithObservatory(t *testing.T, statuses ...*observatory.OutboundStatus) context.Context {
+	t.Helper()
+
+	instance := new(core.Instance)
+	if err := instance.AddFeature(&fakeObservatory{
+		result: &observatory.ObservationResult{Status: statuses},
+	}); err != nil {
+		t.Fatalf("AddFeature() failed: %v", err)
+	}
+
+	return context.WithValue(context.Background(), core.XrayKey(1), instance)
 }
 
 func TestSimpleRouter(t *testing.T) {
@@ -96,6 +129,187 @@ func TestSimpleBalancer(t *testing.T) {
 	common.Must(err)
 	if tag := route.GetOutboundTag(); tag != "test" {
 		t.Error("expect tag 'test', bug actually ", tag)
+	}
+}
+
+func TestFallbackStrategyPicksFirstCandidateWithoutObservatory(t *testing.T) {
+	config := &Config{
+		Rule: []*RoutingRule{
+			{
+				TargetTag: &RoutingRule_BalancingTag{
+					BalancingTag: "balance",
+				},
+				Networks: []net.Network{net.Network_TCP},
+			},
+		},
+		BalancingRule: []*BalancingRule{
+			{
+				Tag:              "balance",
+				OutboundSelector: []string{"test-"},
+				Strategy:         "fallback",
+			},
+		},
+	}
+
+	mockCtl := gomock.NewController(t)
+	defer mockCtl.Finish()
+
+	mockDNS := mocks.NewDNSClient(mockCtl)
+	mockOhm := mocks.NewOutboundManager(mockCtl)
+	mockHs := mocks.NewOutboundHandlerSelector(mockCtl)
+	mockHs.EXPECT().Select(gomock.Eq([]string{"test-"})).Return([]string{"first", "second"})
+
+	r := new(Router)
+	common.Must(r.Init(context.TODO(), config, mockDNS, &mockOutboundManager{
+		Manager:         mockOhm,
+		HandlerSelector: mockHs,
+	}, nil))
+
+	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{
+		Target: net.TCPDestination(net.DomainAddress("example.com"), 80),
+	}})
+	route, err := r.PickRoute(routing_session.AsRoutingContext(ctx))
+	common.Must(err)
+	if tag := route.GetOutboundTag(); tag != "first" {
+		t.Fatalf("expect first candidate, got %q", tag)
+	}
+}
+
+func TestFallbackStrategySkipsDeadCandidateWithObservatory(t *testing.T) {
+	config := &Config{
+		Rule: []*RoutingRule{
+			{
+				TargetTag: &RoutingRule_BalancingTag{
+					BalancingTag: "balance",
+				},
+				Networks: []net.Network{net.Network_TCP},
+			},
+		},
+		BalancingRule: []*BalancingRule{
+			{
+				Tag:              "balance",
+				OutboundSelector: []string{"test-"},
+				Strategy:         "fallback",
+			},
+		},
+	}
+
+	mockCtl := gomock.NewController(t)
+	defer mockCtl.Finish()
+
+	mockDNS := mocks.NewDNSClient(mockCtl)
+	mockOhm := mocks.NewOutboundManager(mockCtl)
+	mockHs := mocks.NewOutboundHandlerSelector(mockCtl)
+	mockHs.EXPECT().Select(gomock.Eq([]string{"test-"})).Return([]string{"dead", "alive"})
+
+	r := new(Router)
+	common.Must(r.Init(testContextWithObservatory(t,
+		&observatory.OutboundStatus{OutboundTag: "dead", Alive: false},
+		&observatory.OutboundStatus{OutboundTag: "alive", Alive: true},
+	), config, mockDNS, &mockOutboundManager{
+		Manager:         mockOhm,
+		HandlerSelector: mockHs,
+	}, nil))
+
+	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{
+		Target: net.TCPDestination(net.DomainAddress("example.com"), 80),
+	}})
+	route, err := r.PickRoute(routing_session.AsRoutingContext(ctx))
+	common.Must(err)
+	if tag := route.GetOutboundTag(); tag != "alive" {
+		t.Fatalf("expect first alive candidate, got %q", tag)
+	}
+}
+
+func TestFallbackStrategyTreatsUnknownCandidateAsUsable(t *testing.T) {
+	config := &Config{
+		Rule: []*RoutingRule{
+			{
+				TargetTag: &RoutingRule_BalancingTag{
+					BalancingTag: "balance",
+				},
+				Networks: []net.Network{net.Network_TCP},
+			},
+		},
+		BalancingRule: []*BalancingRule{
+			{
+				Tag:              "balance",
+				OutboundSelector: []string{"test-"},
+				Strategy:         "fallback",
+			},
+		},
+	}
+
+	mockCtl := gomock.NewController(t)
+	defer mockCtl.Finish()
+
+	mockDNS := mocks.NewDNSClient(mockCtl)
+	mockOhm := mocks.NewOutboundManager(mockCtl)
+	mockHs := mocks.NewOutboundHandlerSelector(mockCtl)
+	mockHs.EXPECT().Select(gomock.Eq([]string{"test-"})).Return([]string{"unknown", "alive"})
+
+	r := new(Router)
+	common.Must(r.Init(testContextWithObservatory(t,
+		&observatory.OutboundStatus{OutboundTag: "alive", Alive: true},
+	), config, mockDNS, &mockOutboundManager{
+		Manager:         mockOhm,
+		HandlerSelector: mockHs,
+	}, nil))
+
+	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{
+		Target: net.TCPDestination(net.DomainAddress("example.com"), 80),
+	}})
+	route, err := r.PickRoute(routing_session.AsRoutingContext(ctx))
+	common.Must(err)
+	if tag := route.GetOutboundTag(); tag != "unknown" {
+		t.Fatalf("expect unknown candidate to remain usable, got %q", tag)
+	}
+}
+
+func TestFallbackStrategyUsesBalancerFallbackTagWhenAllObservedDead(t *testing.T) {
+	config := &Config{
+		Rule: []*RoutingRule{
+			{
+				TargetTag: &RoutingRule_BalancingTag{
+					BalancingTag: "balance",
+				},
+				Networks: []net.Network{net.Network_TCP},
+			},
+		},
+		BalancingRule: []*BalancingRule{
+			{
+				Tag:              "balance",
+				OutboundSelector: []string{"test-"},
+				Strategy:         "fallback",
+				FallbackTag:      "fall",
+			},
+		},
+	}
+
+	mockCtl := gomock.NewController(t)
+	defer mockCtl.Finish()
+
+	mockDNS := mocks.NewDNSClient(mockCtl)
+	mockOhm := mocks.NewOutboundManager(mockCtl)
+	mockHs := mocks.NewOutboundHandlerSelector(mockCtl)
+	mockHs.EXPECT().Select(gomock.Eq([]string{"test-"})).Return([]string{"dead1", "dead2"})
+
+	r := new(Router)
+	common.Must(r.Init(testContextWithObservatory(t,
+		&observatory.OutboundStatus{OutboundTag: "dead1", Alive: false},
+		&observatory.OutboundStatus{OutboundTag: "dead2", Alive: false},
+	), config, mockDNS, &mockOutboundManager{
+		Manager:         mockOhm,
+		HandlerSelector: mockHs,
+	}, nil))
+
+	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{
+		Target: net.TCPDestination(net.DomainAddress("example.com"), 80),
+	}})
+	route, err := r.PickRoute(routing_session.AsRoutingContext(ctx))
+	common.Must(err)
+	if tag := route.GetOutboundTag(); tag != "fall" {
+		t.Fatalf("expect balancer fallback tag, got %q", tag)
 	}
 }
 

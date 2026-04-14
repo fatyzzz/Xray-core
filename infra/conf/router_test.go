@@ -240,3 +240,24 @@ func TestRouterConfig(t *testing.T) {
 		},
 	})
 }
+func TestRouterBuildAcceptsFallbackStrategy(t *testing.T) {
+	cfg := &RouterConfig{
+		Balancers: []*BalancingRule{
+			{
+				Tag:       "ordered",
+				Selectors: StringList{"proxy-"},
+				Strategy: StrategyConfig{
+					Type: "fallback",
+				},
+			},
+		},
+	}
+
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	if got := built.BalancingRule[0].Strategy; got != "fallback" {
+		t.Fatalf("unexpected strategy: %q", got)
+	}
+}

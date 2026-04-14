@@ -120,6 +120,13 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 // Build builds the balancing rule
 func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatcher) (*Balancer, error) {
 	switch strings.ToLower(br.Strategy) {
+	case "fallback":
+		return &Balancer{
+			selectors:   br.OutboundSelector,
+			ohm:         ohm,
+			fallbackTag: br.FallbackTag,
+			strategy:    &FallbackStrategy{},
+		}, nil
 	case "leastping":
 		return &Balancer{
 			selectors:   br.OutboundSelector,
