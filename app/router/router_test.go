@@ -99,6 +99,46 @@ func TestSimpleBalancer(t *testing.T) {
 	}
 }
 
+func TestPickBalancerOutbound(t *testing.T) {
+	config := &Config{
+		BalancingRule: []*BalancingRule{
+			{
+				Tag:              "balance",
+				OutboundSelector: []string{"test-"},
+			},
+		},
+	}
+
+	mockCtl := gomock.NewController(t)
+	defer mockCtl.Finish()
+
+	mockDNS := mocks.NewDNSClient(mockCtl)
+	mockOhm := mocks.NewOutboundManager(mockCtl)
+	mockHs := mocks.NewOutboundHandlerSelector(mockCtl)
+
+	mockHs.EXPECT().Select(gomock.Eq([]string{"test-"})).Return([]string{"test-a", "test-b"})
+
+	r := new(Router)
+	common.Must(r.Init(context.TODO(), config, mockDNS, &mockOutboundManager{
+		Manager:         mockOhm,
+		HandlerSelector: mockHs,
+	}, nil))
+
+	tag, err := r.PickBalancerOutbound("balance")
+	common.Must(err)
+	if tag != "test-a" && tag != "test-b" {
+		t.Errorf("expect one of selected tags, got %q", tag)
+	}
+}
+
+func TestPickBalancerOutboundUnknownTag(t *testing.T) {
+	r := new(Router)
+
+	if _, err := r.PickBalancerOutbound("missing"); err == nil {
+		t.Fatal("expected error for unknown balancer")
+	}
+}
+
 /*
 
 Do not work right now: need a full client setup

@@ -13,6 +13,7 @@ import (
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/outbound"
+	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/pipe"
@@ -80,9 +81,40 @@ func DestIpAddress() net.IP {
 }
 
 var (
-	dnsClient dns.Client
-	obm       outbound.Manager
+	dnsClient      dns.Client
+	obm            outbound.Manager
+	balancerPicker routing.BalancerPicker
 )
+
+func HasDialerProxyTag(sockopt *SocketConfig) bool {
+	return sockopt != nil && (len(sockopt.DialerOutboundTag) > 0 || len(sockopt.DialerBalancerTag) > 0 || len(sockopt.DialerProxy) > 0)
+}
+
+func resolveDialerProxyTag(sockopt *SocketConfig) (string, error) {
+	if sockopt == nil {
+		return "", nil
+	}
+	if len(sockopt.DialerOutboundTag) > 0 {
+		return sockopt.DialerOutboundTag, nil
+	}
+	if len(sockopt.DialerBalancerTag) > 0 {
+		if balancerPicker == nil {
+			return "", errors.New("there is no balancer picker for dialerBalancerTag").AtError()
+		}
+		tag, err := balancerPicker.PickBalancerOutbound(sockopt.DialerBalancerTag)
+		if err != nil {
+			return "", errors.New("failed to resolve dialerBalancerTag").Base(err).AtError()
+		}
+		if tag == "" {
+			return "", errors.New("dialerBalancerTag resolved to empty outbound tag").AtError()
+		}
+		return tag, nil
+	}
+	if len(sockopt.DialerProxy) > 0 {
+		return sockopt.DialerProxy, nil
+	}
+	return "", nil
+}
 
 func LookupForIP(domain string, strategy DomainStrategy, localAddr net.Address) ([]net.IP, error) {
 	if dnsClient == nil {
@@ -231,7 +263,7 @@ func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig
 	var origTargetAddr net.Address
 	if len(outbounds) > 0 {
 		ob := outbounds[len(outbounds)-1]
-		if sockopt == nil || len(sockopt.DialerProxy) == 0 {
+		if !HasDialerProxyTag(sockopt) {
 			src = ob.Gateway
 		}
 		outboundName = ob.Name
@@ -260,7 +292,7 @@ func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig
 			if sockopt.DomainStrategy.ForceIP() {
 				return nil, err
 			}
-		} else if sockopt.HappyEyeballs == nil || sockopt.HappyEyeballs.TryDelayMs == 0 || sockopt.HappyEyeballs.MaxConcurrentTry == 0 || len(ips) < 2 || len(sockopt.DialerProxy) > 0 || dest.Network != net.Network_TCP {
+		} else if sockopt.HappyEyeballs == nil || sockopt.HappyEyeballs.TryDelayMs == 0 || sockopt.HappyEyeballs.MaxConcurrentTry == 0 || len(ips) < 2 || HasDialerProxyTag(sockopt) || dest.Network != net.Network_TCP {
 			dest.Address = net.IPAddress(ips[dice.Roll(len(ips))])
 			errors.LogInfo(ctx, "replace destination with "+dest.String())
 		} else {
@@ -268,21 +300,24 @@ func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig
 		}
 	}
 
-	if len(sockopt.DialerProxy) > 0 {
+	if dialerTag, err := resolveDialerProxyTag(sockopt); err != nil {
+		return nil, err
+	} else if len(dialerTag) > 0 {
 		if obm == nil {
-			return nil, errors.New("there is no outbound manager for dialerProxy").AtError()
+			return nil, errors.New("there is no outbound manager for dialer proxy").AtError()
 		}
-		h := obm.GetHandler(sockopt.DialerProxy)
+		h := obm.GetHandler(dialerTag)
 		if h == nil {
-			return nil, errors.New("there is no outbound handler for dialerProxy").AtError()
+			return nil, errors.New("there is no outbound handler for dialer proxy tag").AtError()
 		}
-		return redirect(ctx, dest, sockopt.DialerProxy, h), nil
+		return redirect(ctx, dest, dialerTag, h), nil
 	}
 
 	return effectiveSystemDialer.Dial(ctx, src, dest, sockopt)
 }
 
-func InitSystemDialer(dc dns.Client, om outbound.Manager) {
+func InitSystemDialer(dc dns.Client, om outbound.Manager, bp routing.BalancerPicker) {
 	dnsClient = dc
 	obm = om
+	balancerPicker = bp
 }

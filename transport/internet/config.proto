@@ -134,6 +134,10 @@ message SocketConfig {
 
   string dialer_proxy = 9;
 
+  string dialer_outbound_tag = 24;
+
+  string dialer_balancer_tag = 25;
+
   int32 tcp_keep_alive_interval = 10;
 
   int32 tcp_keep_alive_idle = 11;

@@ -24,11 +24,12 @@ func TestSocketConfig(t *testing.T) {
 
 	// test "tcpFastOpen": true, queue length 256 is expected. other parameters are tested here too
 	expectedOutput := &internet.SocketConfig{
-		Mark:           1,
-		Tfo:            256,
-		DomainStrategy: internet.DomainStrategy_USE_IP,
-		DialerProxy:    "tag",
-		HappyEyeballs:  &internet.HappyEyeballsConfig{Interleave: 1, TryDelayMs: 0, PrioritizeIpv6: false, MaxConcurrentTry: 4},
+		Mark:              1,
+		Tfo:               256,
+		DomainStrategy:    internet.DomainStrategy_USE_IP,
+		DialerProxy:       "tag",
+		DialerOutboundTag: "tag",
+		HappyEyeballs:     &internet.HappyEyeballsConfig{Interleave: 1, TryDelayMs: 0, PrioritizeIpv6: false, MaxConcurrentTry: 4},
 	}
 	runMultiTestCase(t, []TestCase{
 		{
@@ -157,6 +158,52 @@ func TestSocketConfig(t *testing.T) {
 	if expectedOutput.ParseTFOValue() != -1 {
 		t.Fatalf("unexpected parsed TFO value, which should be -1")
 	}
+}
+
+func TestSocketConfigDialerTags(t *testing.T) {
+	createParser := func() func(string) (proto.Message, error) {
+		return func(s string) (proto.Message, error) {
+			config := new(SocketConfig)
+			if err := json.Unmarshal([]byte(s), config); err != nil {
+				return nil, err
+			}
+			return config.Build()
+		}
+	}
+
+	runMultiTestCase(t, []TestCase{
+		{
+			Input: `{
+				"dialerOutboundTag": "proxy-out"
+			}`,
+			Parser: createParser(),
+			Output: &internet.SocketConfig{
+				DialerOutboundTag: "proxy-out",
+				HappyEyeballs:     &internet.HappyEyeballsConfig{Interleave: 1, TryDelayMs: 0, PrioritizeIpv6: false, MaxConcurrentTry: 4},
+			},
+		},
+		{
+			Input: `{
+				"dialerBalancerTag": "proxy-bal"
+			}`,
+			Parser: createParser(),
+			Output: &internet.SocketConfig{
+				DialerBalancerTag: "proxy-bal",
+				HappyEyeballs:     &internet.HappyEyeballsConfig{Interleave: 1, TryDelayMs: 0, PrioritizeIpv6: false, MaxConcurrentTry: 4},
+			},
+		},
+		{
+			Input: `{
+				"dialerProxy": "legacy-out"
+			}`,
+			Parser: createParser(),
+			Output: &internet.SocketConfig{
+				DialerProxy:       "legacy-out",
+				DialerOutboundTag: "legacy-out",
+				HappyEyeballs:     &internet.HappyEyeballsConfig{Interleave: 1, TryDelayMs: 0, PrioritizeIpv6: false, MaxConcurrentTry: 4},
+			},
+		},
+	})
 }
 
 func TestHeaderCustomUDPBuild(t *testing.T) {

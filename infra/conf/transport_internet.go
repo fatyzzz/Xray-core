@@ -1060,6 +1060,8 @@ type SocketConfig struct {
 	AcceptProxyProtocol   bool                   `json:"acceptProxyProtocol"`
 	DomainStrategy        string                 `json:"domainStrategy"`
 	DialerProxy           string                 `json:"dialerProxy"`
+	DialerOutboundTag     string                 `json:"dialerOutboundTag"`
+	DialerBalancerTag     string                 `json:"dialerBalancerTag"`
 	TCPKeepAliveInterval  int32                  `json:"tcpKeepAliveInterval"`
 	TCPKeepAliveIdle      int32                  `json:"tcpKeepAliveIdle"`
 	TCPCongestion         string                 `json:"tcpCongestion"`
@@ -1173,6 +1175,11 @@ func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 		happyEyeballs.MaxConcurrentTry = c.HappyEyeballsSettings.MaxConcurrentTry
 	}
 
+	dialerOutboundTag := c.DialerOutboundTag
+	if dialerOutboundTag == "" && c.DialerBalancerTag == "" && c.DialerProxy != "" {
+		dialerOutboundTag = c.DialerProxy
+	}
+
 	return &internet.SocketConfig{
 		Mark:                 c.Mark,
 		Tfo:                  tfo,
@@ -1180,6 +1187,8 @@ func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 		DomainStrategy:       dStrategy,
 		AcceptProxyProtocol:  c.AcceptProxyProtocol,
 		DialerProxy:          c.DialerProxy,
+		DialerOutboundTag:    dialerOutboundTag,
+		DialerBalancerTag:    c.DialerBalancerTag,
 		TcpKeepAliveInterval: c.TCPKeepAliveInterval,
 		TcpKeepAliveIdle:     c.TCPKeepAliveIdle,
 		TcpCongestion:        c.TCPCongestion,

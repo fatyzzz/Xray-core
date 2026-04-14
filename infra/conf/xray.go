@@ -221,11 +221,19 @@ type OutboundDetourConfig struct {
 }
 
 func (c *OutboundDetourConfig) checkChainProxyConfig() error {
-	if c.StreamSetting == nil || c.ProxySettings == nil || c.StreamSetting.SocketSettings == nil {
+	if c.StreamSetting == nil || c.StreamSetting.SocketSettings == nil {
 		return nil
 	}
-	if len(c.ProxySettings.Tag) > 0 && len(c.StreamSetting.SocketSettings.DialerProxy) > 0 {
-		return errors.New("proxySettings.tag is conflicted with sockopt.dialerProxy").AtWarning()
+	sockopt := c.StreamSetting.SocketSettings
+	if len(sockopt.DialerOutboundTag) > 0 && len(sockopt.DialerBalancerTag) > 0 {
+		return errors.New("sockopt.dialerOutboundTag is conflicted with sockopt.dialerBalancerTag").AtWarning()
+	}
+	if len(sockopt.DialerProxy) > 0 && (len(sockopt.DialerOutboundTag) > 0 || len(sockopt.DialerBalancerTag) > 0) {
+		return errors.New("sockopt.dialerProxy is conflicted with explicit dialer tag fields").AtWarning()
+	}
+	if c.ProxySettings != nil && len(c.ProxySettings.Tag) > 0 &&
+		(len(sockopt.DialerProxy) > 0 || len(sockopt.DialerOutboundTag) > 0 || len(sockopt.DialerBalancerTag) > 0) {
+		return errors.New("proxySettings.tag is conflicted with dialer chain proxy settings").AtWarning()
 	}
 	return nil
 }
@@ -295,12 +303,12 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 		if ps.TransportLayerProxy {
 			if senderSettings.StreamSettings != nil {
 				if senderSettings.StreamSettings.SocketSettings != nil {
-					senderSettings.StreamSettings.SocketSettings.DialerProxy = ps.Tag
+					senderSettings.StreamSettings.SocketSettings.DialerOutboundTag = ps.Tag
 				} else {
-					senderSettings.StreamSettings.SocketSettings = &internet.SocketConfig{DialerProxy: ps.Tag}
+					senderSettings.StreamSettings.SocketSettings = &internet.SocketConfig{DialerOutboundTag: ps.Tag}
 				}
 			} else {
-				senderSettings.StreamSettings = &internet.StreamConfig{SocketSettings: &internet.SocketConfig{DialerProxy: ps.Tag}}
+				senderSettings.StreamSettings = &internet.StreamConfig{SocketSettings: &internet.SocketConfig{DialerOutboundTag: ps.Tag}}
 			}
 			ps = nil
 		}

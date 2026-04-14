@@ -91,6 +91,13 @@ type Balancer struct {
 	override override
 }
 
+func (r *Router) PickBalancerOutbound(tag string) (string, error) {
+	if b, ok := r.balancers[tag]; ok {
+		return b.PickOutbound()
+	}
+	return "", errors.New("cannot find balancer")
+}
+
 // PickOutbound picks the tag of a outbound
 func (b *Balancer) PickOutbound() (string, error) {
 	candidates, err := b.SelectOutbounds()

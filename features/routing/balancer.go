@@ -5,6 +5,10 @@ type BalancerOverrider interface {
 	GetOverrideTarget(tag string) (string, error)
 }
 
+type BalancerPicker interface {
+	PickBalancerOutbound(tag string) (string, error)
+}
+
 type BalancerPrincipleTarget interface {
 	GetPrincipleTarget(tag string) ([]string, error)
 }

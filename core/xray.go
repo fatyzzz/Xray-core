@@ -230,6 +230,10 @@ func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
 			obm, _ := server.GetFeature(outbound.ManagerType()).(outbound.Manager)
 			return obm
 		}(),
+		func() routing.BalancerPicker {
+			picker, _ := server.GetFeature(routing.RouterType()).(routing.BalancerPicker)
+			return picker
+		}(),
 	)
 
 	server.resolveLock.Lock()

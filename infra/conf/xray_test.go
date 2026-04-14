@@ -222,6 +222,36 @@ func TestSniffingConfig_Build(t *testing.T) {
 	}
 }
 
+func TestOutboundDetourConfigRejectsConflictingDialerTags(t *testing.T) {
+	cfg := &OutboundDetourConfig{
+		StreamSetting: &StreamConfig{
+			SocketSettings: &SocketConfig{
+				DialerOutboundTag: "proxy-out",
+				DialerBalancerTag: "proxy-bal",
+			},
+		},
+	}
+
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected conflicting dialer tags to fail")
+	}
+}
+
+func TestOutboundDetourConfigRejectsLegacyAndExplicitDialerTags(t *testing.T) {
+	cfg := &OutboundDetourConfig{
+		StreamSetting: &StreamConfig{
+			SocketSettings: &SocketConfig{
+				DialerProxy:       "legacy-out",
+				DialerOutboundTag: "proxy-out",
+			},
+		},
+	}
+
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected legacy and explicit dialer tags to fail")
+	}
+}
+
 func TestMuxConfig_Build(t *testing.T) {
 	tests := []struct {
 		name   string
