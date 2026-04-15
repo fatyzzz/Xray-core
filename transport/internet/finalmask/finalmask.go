@@ -30,6 +30,19 @@ func (m *UdpmaskManager) WrapPacketConnClient(raw net.PacketConn) (net.PacketCon
 	var conns []net.PacketConn
 	for i, mask := range m.udpmasks {
 		if _, ok := mask.(headerConn); ok {
+			if mode, ok := mask.(headerConnMode); ok && !mode.UseHeaderConn() {
+				if len(conns) > 0 {
+					raw = &headerManagerConn{sizes: sizes, conns: conns, PacketConn: raw}
+					sizes = nil
+					conns = nil
+				}
+				var err error
+				raw, err = mask.WrapPacketConnClient(raw, i, len(m.udpmasks)-1)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
 			conn, err := mask.WrapPacketConnClient(nil, i, len(m.udpmasks)-1)
 			if err != nil {
 				return nil, err
@@ -63,6 +76,19 @@ func (m *UdpmaskManager) WrapPacketConnServer(raw net.PacketConn) (net.PacketCon
 	var conns []net.PacketConn
 	for i, mask := range m.udpmasks {
 		if _, ok := mask.(headerConn); ok {
+			if mode, ok := mask.(headerConnMode); ok && !mode.UseHeaderConn() {
+				if len(conns) > 0 {
+					raw = &headerManagerConn{sizes: sizes, conns: conns, PacketConn: raw}
+					sizes = nil
+					conns = nil
+				}
+				var err error
+				raw, err = mask.WrapPacketConnServer(raw, i, len(m.udpmasks)-1)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
 			conn, err := mask.WrapPacketConnServer(nil, i, len(m.udpmasks)-1)
 			if err != nil {
 				return nil, err
@@ -97,6 +123,10 @@ const (
 
 type headerConn interface {
 	HeaderConn()
+}
+
+type headerConnMode interface {
+	UseHeaderConn() bool
 }
 
 type headerSize interface {
@@ -256,8 +286,8 @@ func (l *tcpListener) Accept() (net.Conn, error) {
 	newConn, err := l.m.WrapConnServer(conn)
 	if err != nil {
 		errors.LogDebugInner(context.Background(), err, "mask err")
-		// conn.Close()
-		return conn, nil
+		_ = conn.Close()
+		return nil, err
 	}
 
 	return newConn, nil
